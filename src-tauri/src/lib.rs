@@ -80,33 +80,15 @@ pub struct AppState {
 }
 
 fn init_db(conn: &Connection) {
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY, title TEXT NOT NULL, last_msg TEXT NOT NULL, unread INTEGER DEFAULT 0, is_channel INTEGER DEFAULT 0)",
-        [],
-    ).unwrap();
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS messages (id INTEGER NOT NULL, chat_id INTEGER NOT NULL, sender TEXT NOT NULL, text TEXT NOT NULL, is_outgoing INTEGER NOT NULL, is_deleted INTEGER DEFAULT 0, has_media INTEGER DEFAULT 0, time TEXT NOT NULL, PRIMARY KEY (chat_id, id))",
-        [],
-    ).unwrap();
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS edits (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL, msg_id INTEGER NOT NULL, old_text TEXT NOT NULL, edit_time TEXT NOT NULL)",
-        [],
-    ).unwrap();
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS app_config (key TEXT PRIMARY KEY, val TEXT NOT NULL)",
-        [],
-    ).unwrap();
+    conn.execute("CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY, title TEXT NOT NULL, last_msg TEXT NOT NULL, unread INTEGER DEFAULT 0, is_channel INTEGER DEFAULT 0)", []).unwrap();
+    conn.execute("CREATE TABLE IF NOT EXISTS messages (id INTEGER NOT NULL, chat_id INTEGER NOT NULL, sender TEXT NOT NULL, text TEXT NOT NULL, is_outgoing INTEGER NOT NULL, is_deleted INTEGER DEFAULT 0, has_media INTEGER DEFAULT 0, time TEXT NOT NULL, PRIMARY KEY (chat_id, id))", []).unwrap();
+    conn.execute("CREATE TABLE IF NOT EXISTS edits (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL, msg_id INTEGER NOT NULL, old_text TEXT NOT NULL, edit_time TEXT NOT NULL)", []).unwrap();
+    conn.execute("CREATE TABLE IF NOT EXISTS app_config (key TEXT PRIMARY KEY, val TEXT NOT NULL)", []).unwrap();
 
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM chats", [], |r| r.get(0)).unwrap_or(0);
     if count == 0 {
-        conn.execute(
-            "INSERT INTO chats (id, title, last_msg, unread, is_channel) VALUES (1001, 'Дмитрий (Клиент)', 'Медиа-сейф активен', 1, 0)",
-            [],
-        ).unwrap();
-        conn.execute(
-            "INSERT INTO messages (id, chat_id, sender, text, is_outgoing, is_deleted, has_media, time) VALUES (101, 1001, 'Дмитрий', 'Скинул файл в кэш.', 0, 0, 1, '12:10')",
-            [],
-        ).unwrap();
+        conn.execute("INSERT INTO chats (id, title, last_msg, unread, is_channel) VALUES (1001, 'Дмитрий (Клиент)', 'Медиа-сейф активен', 1, 0)", []).unwrap();
+        conn.execute("INSERT INTO messages (id, chat_id, sender, text, is_outgoing, is_deleted, has_media, time) VALUES (101, 1001, 'Дмитрий', 'Скинул файл в кэш.', 0, 0, 1, '12:10')", []).unwrap();
     }
 }
 
@@ -145,53 +127,48 @@ fn spawn_update_interceptor(
     app_handle: AppHandle,
 ) {
     tauri::async_runtime::spawn(async move {
-        loop {
-            match client.next_update().await {
-                Ok(Some(update)) => {
-                    if let Update::NewMessage(message) = update {
-                        let chat = message.chat();
-                        let chat_id = chat.id();
-                        let chat_title = chat.name().to_string();
-                        let msg_id = message.id() as i64;
-                        let text = message.text().to_string();
-                        let has_media = message.media().is_some();
-                        if text.is_empty() && !has_media { continue; }
-                        let display_text = if text.is_empty() { "[Медиафайл]".to_string() } else { text };
-                        let sender = message.sender().map(|s| s.name().to_string()).unwrap_or_else(|| chat_title.clone());
-                        let is_out = if message.outgoing() { 1 } else { 0 };
-                        let now = Local::now().format("%H:%M").to_string();
+        let mut updates = client.iter_updates();
+        while let Ok(update) = updates.next().await {
+            if let Update::NewMessage(message) = update {
+                let chat = message.chat();
+                let chat_id = chat.id();
+                let chat_title = chat.name().to_string();
+                let msg_id = message.id() as i64;
+                let text = message.text().to_string();
+                let has_media = message.media().is_some();
+                if text.is_empty() && !has_media { continue; }
+                let display_text = if text.is_empty() { "[Медиафайл]".to_string() } else { text };
+                let sender = message.sender().map(|s| s.name().to_string()).unwrap_or_else(|| chat_title.clone());
+                let is_out = if message.outgoing() { 1 } else { 0 };
+                let now = Local::now().format("%H:%M").to_string();
 
-                        let media_safe_on = settings.lock().unwrap().media_safe;
-                        if media_safe_on && has_media {
-                            let media_dir = { tg_state.lock().await.media_dir.clone() };
-                            let _ = std::fs::create_dir_all(&media_dir);
-                            let file_path = media_dir.join(format!("media_{}_{}.dat", chat_id, msg_id));
-                            if let Ok(file_download) = message.download().await {
-                                let _ = std::fs::write(&file_path, &file_download);
-                            }
-                        }
-
-                        {
-                            let mut tg = tg_state.lock().await;
-                            tg.peers.insert(chat_id, chat);
-                        }
-
-                        {
-                            let conn = db.lock().unwrap();
-                            let _ = conn.execute(
-                                "INSERT OR REPLACE INTO chats (id, title, last_msg, unread, is_channel) VALUES (?1, ?2, ?3, COALESCE((SELECT unread FROM chats WHERE id = ?1), 0) + 1, 0)",
-                                params![chat_id, chat_title, display_text],
-                            );
-                            let _ = conn.execute(
-                                "INSERT OR REPLACE INTO messages (id, chat_id, sender, text, is_outgoing, is_deleted, has_media, time) VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7)",
-                                params![msg_id, chat_id, sender, display_text, is_out, if has_media { 1 } else { 0 }, now],
-                            );
-                        }
-                        let _ = app_handle.emit("db-updated", ());
+                let media_safe_on = settings.lock().unwrap().media_safe;
+                if media_safe_on && has_media {
+                    let media_dir = { tg_state.lock().await.media_dir.clone() };
+                    let _ = std::fs::create_dir_all(&media_dir);
+                    let file_path = media_dir.join(format!("media_{}_{}.dat", chat_id, msg_id));
+                    if let Ok(file_download) = message.download().await {
+                        let _ = std::fs::write(&file_path, &file_download);
                     }
                 }
-                Ok(None) => break,
-                Err(_) => { tokio::time::sleep(std::time::Duration::from_secs(3)).await; }
+
+                {
+                    let mut tg = tg_state.lock().await;
+                    tg.peers.insert(chat_id, chat);
+                }
+
+                {
+                    let conn = db.lock().unwrap();
+                    let _ = conn.execute(
+                        "INSERT OR REPLACE INTO chats (id, title, last_msg, unread, is_channel) VALUES (?1, ?2, ?3, COALESCE((SELECT unread FROM chats WHERE id = ?1), 0) + 1, 0)",
+                        params![chat_id, chat_title, display_text],
+                    );
+                    let _ = conn.execute(
+                        "INSERT OR REPLACE INTO messages (id, chat_id, sender, text, is_outgoing, is_deleted, has_media, time) VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7)",
+                        params![msg_id, chat_id, sender, display_text, is_out, if has_media { 1 } else { 0 }, now],
+                    );
+                }
+                let _ = app_handle.emit("db-updated", ());
             }
         }
     });
@@ -290,7 +267,7 @@ async fn check_auth_status(state: State<'_, AppState>, app_handle: AppHandle) ->
     if let (Some(id_str), Some(hash_str)) = (saved_id, saved_hash) {
         if let Ok(api_id) = id_str.parse::<i32>() {
             if tg.session_path.exists() {
-                let session = Session::load_file_or_create(&tg.session_path).map_err(|e| e.to_string())?;
+                let session = Session::load_file(&tg.session_path).map_err(|e| e.to_string())?;
                 let client = Client::connect(Config { session, api_id, api_hash: hash_str.clone(), params: Default::default() }).await.map_err(|e| e.to_string())?;
                 if client.is_authorized().await.unwrap_or(false) {
                     if !tg.listener_running {
@@ -331,7 +308,9 @@ async fn auth_verify_code(code: String, state: State<'_, AppState>, app_handle: 
     let token = tg.login_token.take().ok_or("Нет токена")?;
     match client.sign_in(&token, &code).await {
         Ok(_) => {
-            client.session().save_to_file(&tg.session_path).ok();
+            if let Some(session) = client.session() {
+                let _ = session.save_to_file(&tg.session_path);
+            }
             if !tg.listener_running {
                 tg.listener_running = true;
                 spawn_update_interceptor(client, state.db.clone(), state.settings.clone(), state.tg.clone(), app_handle);
@@ -352,7 +331,9 @@ async fn auth_verify_2fa(password: String, state: State<'_, AppState>, app_handl
     let client = tg.client.as_ref().ok_or("Нет клиента")?.clone();
     let pwd_token = tg.password_token.take().ok_or("Нет токена 2FA")?;
     client.check_password(pwd_token, password.as_bytes()).await.map_err(|e| e.to_string())?;
-    client.session().save_to_file(&tg.session_path).ok();
+    if let Some(session) = client.session() {
+        let _ = session.save_to_file(&tg.session_path);
+    }
     if !tg.listener_running {
         tg.listener_running = true;
         spawn_update_interceptor(client, state.db.clone(), state.settings.clone(), state.tg.clone(), app_handle);
