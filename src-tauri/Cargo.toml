@@ -1,7 +1,7 @@
 [package]
 name = "vortexgram"
-version = "0.4.0"
-description = "AyuGram-style Telegram client on Rust with Proxy Collector"
+version = "0.5.0"
+description = "Advanced AyuGram-style Telegram client on Rust with Media Safe & Proxy Collector"
 authors = ["StealthDev"]
 edition = "2021"
 
@@ -22,5 +22,6 @@ tokio = { version = "1.38", features = ["rt-multi-thread", "macros", "sync", "ti
 grammers-client = "0.11"
 grammers-session = "0.11"
 grammers-tl-types = "0.11"
-reqwest = { version = "0.12", features = ["blocking", "json"] }
+# Важно: rustls-tls избавляет от необходимости кросс-компилировать системный OpenSSL под Android
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 url = "2.5"
