@@ -42,7 +42,7 @@ jobs:
 
       - name: Initialize Android Project & Build Unsigned APK
         run: |
-          cargo tauri android init --force
+          cargo tauri android init
           cargo tauri android build --apk --target aarch64
 
       - name: Sign APK with Debug Keystore
