@@ -1,0 +1,59 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK & NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK & Build Tools
+        run: |
+          sdkmanager --install "ndk;26.3.11579264" "platforms;android-34" "build-tools;34.0.0"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.3.11579264" >> $GITHUB_ENV
+          echo "NDK_HOME=$ANDROID_HOME/ndk/26.3.11579264" >> $GITHUB_ENV
+
+      - name: Install Rust & Android Targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - name: Install Linux Dependencies & Tauri CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev
+          cargo install tauri-cli --version "^2.0.0" --locked
+
+      - name: Initialize Android Project & Build Unsigned APK
+        run: |
+          cargo tauri android init
+          cargo tauri android build --apk --target aarch64
+
+      - name: Sign APK with Debug Keystore (Ready to install)
+        run: |
+          UNSIGNED_APK=$(find src-tauri/gen/android/app/build/outputs/apk -name "*-unsigned.apk" | head -n 1)
+          
+          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=VortexGram,O=Rust,C=US"
+          
+          $ANDROID_HOME/build-tools/34.0.0/zipalign -v -p 4 "$UNSIGNED_APK" VortexGram-aligned.apk
+          $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android --out VortexGram-release.apk VortexGram-aligned.apk
+
+      - name: Upload Ready APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VortexGram-Android-APK
+          path: VortexGram-release.apk
